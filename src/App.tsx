@@ -1,155 +1,66 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Layout } from './components/Layout';
 import { DropZone } from './components/DropZone';
 import { Visualizer } from './components/Visualizer';
-import type { WorkerResponse, NoteEventTime } from './types';
-import { Midi } from '@tonejs/midi';
 import { Download, RefreshCw } from 'lucide-react';
+
+import { useTranscriber } from './hooks/useTranscriber';
+import { useAudioPlayer } from './hooks/useAudioPlayer';
+import { resampleAudio } from './utils/audio';
+import { generateMidi } from './utils/midi';
 
 function App() {
   const [file, setFile] = useState<File | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [midiUrl, setMidiUrl] = useState<string | null>(null);
-  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
 
-  // Standardized processing state
-  const workerRef = useRef<Worker | null>(null);
-  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const { isProcessing, progress, result: transcriptionResult, startTranscription, resetTranscriber } = useTranscriber();
+  const { isPlaying, analyser, playAudio, stopAudio, initAudioContext } = useAudioPlayer();
 
+  // Watch for transcription results to generate MIDI
   useEffect(() => {
-    workerRef.current = new Worker(new URL('./workers/basicPitchWorker.ts', import.meta.url), { type: 'module' });
-    workerRef.current.onmessage = (e: MessageEvent<WorkerResponse>) => {
-      const { type, payload } = e.data;
-      if (type === 'INIT_COMPLETE') {
-        console.log('Worker initialized');
-      } else if (type === 'PROGRESS') {
-        setProgress(Math.round(payload as number * 100));
-      } else if (type === 'RESULT') {
-        generateMidi(payload as NoteEventTime[]);
-        setIsProcessing(false);
-        setProgress(100);
-      } else if (type === 'ERROR') {
-        console.error(payload);
-        setIsProcessing(false);
-        alert('Error processing audio: ' + (payload || 'Unknown error'));
+    if (transcriptionResult) {
+      const url = generateMidi(transcriptionResult);
+      if (url) {
+        setMidiUrl(url);
+      } else {
+        alert('No notes detected!');
       }
-    };
-    workerRef.current.postMessage({ type: 'INIT' });
-
-    return () => {
-      workerRef.current?.terminate();
-    };
-  }, []);
+    }
+  }, [transcriptionResult]);
 
   const handleFileSelected = async (selectedFile: File) => {
     setFile(selectedFile);
     setMidiUrl(null);
-    setProgress(0);
-    setIsProcessing(true);
+    resetTranscriber();
 
     try {
       const arrayBuffer = await selectedFile.arrayBuffer();
-      const ctx = new AudioContext();
 
+      // Initialize Audio Context (needed for decoding and playing)
+      const ctx = initAudioContext();
+
+      // Decode
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
-      // Setup Visualizer
-      const ana = ctx.createAnalyser();
-      ana.fftSize = 2048;
-      setAnalyser(ana);
-
       // Play audio for visualization
-      playAudio(ctx, audioBuffer, ana);
+      playAudio(audioBuffer);
 
-      console.log('Starting offline rendering setup...');
-      // Resample to 22050Hz Mono for Basic Pitch
-      const targetSampleRate = 22050;
-      // Ensure length is an integer
-      const length = Math.ceil(audioBuffer.duration * targetSampleRate);
-
-      const offlineCtx = new OfflineAudioContext(
-        1, // Mono
-        length,
-        targetSampleRate
-      );
-
-      const source = offlineCtx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(offlineCtx.destination);
-      source.start();
-
-      console.log(`Rendering offline audio (Length: ${length} frames)...`);
-      const resampled = await offlineCtx.startRendering();
-      const channelData = resampled.getChannelData(0);
-      console.log('Offline rendering complete. Sending to worker...');
-
-      if (workerRef.current) {
-        workerRef.current.postMessage({
-          type: 'PROCESS',
-          payload: {
-            audioChannels: channelData, // Send as Float32Array (Mono)
-            sampleRate: targetSampleRate
-          }
-        });
-      } else {
-        console.error('Worker reference is null!');
-        alert('System error: Worker not initialized.');
-        setIsProcessing(false);
-      }
+      // Resample and process
+      const { channelData, sampleRate } = await resampleAudio(audioBuffer);
+      startTranscription(channelData, sampleRate);
 
     } catch (err) {
       console.error(err);
-      setIsProcessing(false);
       alert('Failed to load audio file. Please try a different MP3 or WAV.');
+      resetTranscriber();
     }
-  };
-
-  const playAudio = (ctx: AudioContext, buffer: AudioBuffer, dest: AnalyserNode) => {
-    if (sourceRef.current) sourceRef.current.stop();
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(dest);
-    dest.connect(ctx.destination);
-    source.start(0);
-    sourceRef.current = source;
-    setIsPlaying(true);
-    source.onended = () => setIsPlaying(false);
-  };
-
-  const generateMidi = (noteEvents: NoteEventTime[]) => {
-    if (!noteEvents || noteEvents.length === 0) {
-      alert('No notes detected!');
-      return;
-    }
-
-    const midi = new Midi();
-    const track = midi.addTrack();
-
-    noteEvents.forEach(note => {
-      track.addNote({
-        midi: note.pitchMidi,
-        time: note.startTimeSeconds,
-        duration: note.durationSeconds,
-        velocity: note.amplitude
-      });
-    });
-
-    const midiArray = midi.toArray();
-    const blob = new Blob([midiArray], { type: 'audio/midi' });
-    const url = URL.createObjectURL(blob);
-    setMidiUrl(url);
   };
 
   const reset = () => {
     setFile(null);
     setMidiUrl(null);
-    setIsProcessing(false);
-    if (sourceRef.current) {
-      sourceRef.current.stop();
-    }
-    setIsPlaying(false);
+    stopAudio();
+    resetTranscriber();
   };
 
   return (
