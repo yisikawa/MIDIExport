@@ -63,11 +63,15 @@ function App() {
       // Play audio for visualization
       playAudio(ctx, audioBuffer, ana);
 
+      console.log('Starting offline rendering setup...');
       // Resample to 22050Hz Mono for Basic Pitch
       const targetSampleRate = 22050;
+      // Ensure length is an integer
+      const length = Math.ceil(audioBuffer.duration * targetSampleRate);
+
       const offlineCtx = new OfflineAudioContext(
         1, // Mono
-        audioBuffer.duration * targetSampleRate,
+        length,
         targetSampleRate
       );
 
@@ -76,16 +80,24 @@ function App() {
       source.connect(offlineCtx.destination);
       source.start();
 
+      console.log(`Rendering offline audio (Length: ${length} frames)...`);
       const resampled = await offlineCtx.startRendering();
       const channelData = resampled.getChannelData(0);
+      console.log('Offline rendering complete. Sending to worker...');
 
-      workerRef.current?.postMessage({
-        type: 'PROCESS',
-        payload: {
-          audioChannels: channelData, // Send as Float32Array (Mono)
-          sampleRate: targetSampleRate
-        }
-      });
+      if (workerRef.current) {
+        workerRef.current.postMessage({
+          type: 'PROCESS',
+          payload: {
+            audioChannels: channelData, // Send as Float32Array (Mono)
+            sampleRate: targetSampleRate
+          }
+        });
+      } else {
+        console.error('Worker reference is null!');
+        alert('System error: Worker not initialized.');
+        setIsProcessing(false);
+      }
 
     } catch (err) {
       console.error(err);
