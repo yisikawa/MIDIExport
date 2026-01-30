@@ -61,9 +61,9 @@ async def separate_audio(file: UploadFile = File(...), model: str = "htdemucs_6s
         
         # Set FFmpeg path so ffmpeg-python can find the executable
         env = os.environ.copy()
-        ffmpeg_bin = r"C:\ffmpeg-8.0.1\bin"
-        env["PATH"] = f"{ffmpeg_bin};{env.get('PATH', '')}"
-        env["FFMPEG_BINARY_DIR"] = ffmpeg_bin 
+        # ffmpeg_bin = r"C:\ffmpeg-8.0.1\bin"
+        # env["PATH"] = f"{ffmpeg_bin};{env.get('PATH', '')}"
+        # env["FFMPEG_BINARY_DIR"] = ffmpeg_bin 
         
         print(f"Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, env=env)
