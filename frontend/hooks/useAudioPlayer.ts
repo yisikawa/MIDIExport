@@ -1,6 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-interface UseAudioPlayerResult {
+export interface AudioTrack {
+    name: string;
+    buffer: AudioBuffer;
+}
+
+export interface UseAudioPlayerResult {
     isPlaying: boolean;
     currentTime: number;
     duration: number;
@@ -8,6 +13,8 @@ interface UseAudioPlayerResult {
     volume: number;
     setVolume: (volume: number) => void;
     playAudio: (buffer: AudioBuffer) => void;
+    playTracks: (tracks: AudioTrack[]) => void;
+    toggleTrackMute: (name: string, isMuted: boolean) => void;
     togglePlayPause: () => void;
     seek: (time: number) => void;
     stopAudio: () => void;
@@ -22,9 +29,11 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
     const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
-    const sourceRef = useRef<AudioBufferSourceNode | null>(null);
-    const bufferRef = useRef<AudioBuffer | null>(null);
-    const gainNodeRef = useRef<GainNode | null>(null);
+    const buffersRef = useRef<AudioTrack[]>([]);
+    const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
+    const gainsRef = useRef<Map<string, GainNode>>(new Map());
+    const masterGainRef = useRef<GainNode | null>(null);
+    const mutedTracksRef = useRef<Set<string>>(new Set());
 
     const startTimeRef = useRef<number>(0);
     const pauseTimeRef = useRef<number>(0);
@@ -44,10 +53,30 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
         return audioContextRef.current;
     }, []);
 
+    const stopAllSources = useCallback(() => {
+        sourcesRef.current.forEach(source => {
+            try { source.stop(); } catch (e) { /* ignore */ }
+        });
+        sourcesRef.current = [];
+    }, []);
+
     const setVolume = useCallback((newVolume: number) => {
         setVolumeState(newVolume);
-        if (gainNodeRef.current) {
-            gainNodeRef.current.gain.value = newVolume;
+        if (masterGainRef.current) {
+            masterGainRef.current.gain.value = newVolume;
+        }
+    }, []);
+
+    const toggleTrackMute = useCallback((name: string, isMuted: boolean) => {
+        if (isMuted) {
+            mutedTracksRef.current.add(name);
+        } else {
+            mutedTracksRef.current.delete(name);
+        }
+
+        const gainNode = gainsRef.current.get(name);
+        if (gainNode) {
+            gainNode.gain.value = isMuted ? 0 : 1;
         }
     }, []);
 
@@ -69,29 +98,17 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
     }, [isPlaying, updateProgress]);
 
     const stopAudio = useCallback(() => {
-        if (sourceRef.current) {
-            try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
-        }
+        stopAllSources();
         setIsPlaying(false);
         pauseTimeRef.current = 0;
         setCurrentTime(0);
-        bufferRef.current = null;
-    }, []);
+        buffersRef.current = [];
+        gainsRef.current.clear();
+        mutedTracksRef.current.clear();
+    }, [stopAllSources]);
 
-    const playAudio = useCallback((buffer: AudioBuffer) => {
-        const ctx = initAudioContext();
-
-        if (sourceRef.current) {
-            try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
-        }
-
-        bufferRef.current = buffer;
-        setDuration(buffer.duration);
-        pauseTimeRef.current = 0;
-        setCurrentTime(0);
-
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
+    const startPlayback = useCallback((ctx: AudioContext, timeOffset: number) => {
+        stopAllSources();
 
         let dest = analyser;
         if (!dest) {
@@ -100,72 +117,54 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
             setAnalyser(dest);
         }
 
-        let gain = gainNodeRef.current;
-        if (!gain) {
-            gain = ctx.createGain();
-            gain.connect(ctx.destination);
-            gainNodeRef.current = gain;
+        let masterGain = masterGainRef.current;
+        if (!masterGain) {
+            masterGain = ctx.createGain();
+            masterGainRef.current = masterGain;
         }
-        gain.gain.value = volume;
+        masterGain.gain.value = volume;
 
-        source.connect(dest);
-        dest.connect(gain);
+        try { masterGain.disconnect(); } catch (e) { /* ignore */ }
+        try { dest.disconnect(); } catch (e) { /* ignore */ }
 
+        masterGain.connect(dest);
+        dest.connect(ctx.destination);
+
+        const newSources: AudioBufferSourceNode[] = [];
+        gainsRef.current.clear();
+
+        let maxDuration = 0;
+        let longestSource: AudioBufferSourceNode | null = null;
+
+        buffersRef.current.forEach(track => {
+            const source = ctx.createBufferSource();
+            source.buffer = track.buffer;
+
+            const trackGain = ctx.createGain();
+            trackGain.gain.value = mutedTracksRef.current.has(track.name) ? 0 : 1;
+
+            source.connect(trackGain);
+            trackGain.connect(masterGain);
+
+            source.start(0, timeOffset);
+            newSources.push(source);
+            gainsRef.current.set(track.name, trackGain);
+
+            if (track.buffer.duration > maxDuration) {
+                maxDuration = track.buffer.duration;
+                longestSource = source;
+            }
+        });
+
+        sourcesRef.current = newSources;
         startTimeRef.current = ctx.currentTime;
-        source.start(0);
-
-        sourceRef.current = source;
         setIsPlaying(true);
 
-        source.onended = () => {
-            setIsPlaying((currentIsPlaying) => {
-                if (!currentIsPlaying) return false;
-                if (ctx.currentTime - startTimeRef.current + pauseTimeRef.current >= buffer.duration - 0.1) {
-                    pauseTimeRef.current = 0;
-                    setCurrentTime(0);
-                }
-                return false;
-            });
-        };
-    }, [initAudioContext, analyser]);
-
-    const togglePlayPause = useCallback(() => {
-        const ctx = audioContextRef.current;
-        const buffer = bufferRef.current;
-        const dest = analyser;
-        if (!ctx || !buffer || !dest) return;
-
-        if (isPlaying) {
-            if (sourceRef.current) {
-                try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
-            }
-            pauseTimeRef.current += ctx.currentTime - startTimeRef.current;
-            setIsPlaying(false);
-        } else {
-            const source = ctx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(dest);
-            const gain = gainNodeRef.current;
-            if (gain) {
-                dest.connect(gain);
-            } else {
-                dest.connect(ctx.destination);
-            }
-
-            startTimeRef.current = ctx.currentTime;
-
-            if (pauseTimeRef.current >= buffer.duration) {
-                pauseTimeRef.current = 0;
-            }
-
-            source.start(0, pauseTimeRef.current);
-            sourceRef.current = source;
-            setIsPlaying(true);
-
-            source.onended = () => {
+        if (longestSource) {
+            (longestSource as AudioBufferSourceNode).onended = () => {
                 setIsPlaying((currentIsPlaying) => {
                     if (!currentIsPlaying) return false;
-                    if (ctx.currentTime - startTimeRef.current + pauseTimeRef.current >= buffer.duration - 0.1) {
+                    if (ctx.currentTime - startTimeRef.current + pauseTimeRef.current >= maxDuration - 0.1) {
                         pauseTimeRef.current = 0;
                         setCurrentTime(0);
                     }
@@ -173,52 +172,59 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
                 });
             };
         }
-    }, [isPlaying, analyser]);
+    }, [analyser, volume, stopAllSources]);
+
+    const playTracks = useCallback((tracks: AudioTrack[]) => {
+        const ctx = initAudioContext();
+        buffersRef.current = tracks;
+
+        const maxDur = tracks.reduce((max, t) => Math.max(max, t.buffer.duration), 0);
+        setDuration(maxDur);
+        pauseTimeRef.current = 0;
+        setCurrentTime(0);
+
+        startPlayback(ctx, 0);
+    }, [initAudioContext, startPlayback]);
+
+    const playAudio = useCallback((buffer: AudioBuffer) => {
+        playTracks([{ name: 'main', buffer }]);
+    }, [playTracks]);
+
+    const togglePlayPause = useCallback(() => {
+        const ctx = audioContextRef.current;
+        if (!ctx || buffersRef.current.length === 0) return;
+
+        if (isPlaying) {
+            stopAllSources();
+            pauseTimeRef.current += ctx.currentTime - startTimeRef.current;
+            setIsPlaying(false);
+        } else {
+            let offset = pauseTimeRef.current;
+            if (offset >= duration) {
+                offset = 0;
+                pauseTimeRef.current = 0;
+            }
+            startPlayback(ctx, offset);
+        }
+    }, [isPlaying, duration, startPlayback, stopAllSources]);
 
     const seek = useCallback((time: number) => {
         const ctx = audioContextRef.current;
-        const buffer = bufferRef.current;
-        const dest = analyser;
-        if (!ctx || !buffer || !dest) return;
+        if (!ctx || buffersRef.current.length === 0) return;
 
         if (time < 0) time = 0;
-        if (time > buffer.duration) time = buffer.duration;
+        if (time > duration) time = duration;
 
         const wasPlaying = isPlaying;
-        if (sourceRef.current) {
-            try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
-        }
+        stopAllSources();
 
         pauseTimeRef.current = time;
         setCurrentTime(time);
 
         if (wasPlaying) {
-            const source = ctx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(dest);
-            const gain = gainNodeRef.current;
-            if (gain) {
-                dest.connect(gain);
-            } else {
-                dest.connect(ctx.destination);
-            }
-
-            startTimeRef.current = ctx.currentTime;
-            source.start(0, time);
-            sourceRef.current = source;
-
-            source.onended = () => {
-                setIsPlaying((currentIsPlaying) => {
-                    if (!currentIsPlaying) return false;
-                    if (ctx.currentTime - startTimeRef.current + pauseTimeRef.current >= buffer.duration - 0.1) {
-                        pauseTimeRef.current = 0;
-                        setCurrentTime(0);
-                    }
-                    return false;
-                });
-            };
+            startPlayback(ctx, time);
         }
-    }, [isPlaying, analyser]);
+    }, [isPlaying, duration, startPlayback, stopAllSources]);
 
     return {
         isPlaying,
@@ -228,6 +234,8 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
         volume,
         setVolume,
         playAudio,
+        playTracks,
+        toggleTrackMute,
         togglePlayPause,
         seek,
         stopAudio,

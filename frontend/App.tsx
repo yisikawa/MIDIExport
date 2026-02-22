@@ -3,7 +3,7 @@ import { Layout } from './components/Layout';
 import { DropZone } from './components/DropZone';
 import { Visualizer } from './components/Visualizer';
 import { AudioPlayerBar } from './components/AudioPlayerBar';
-import { Download, RefreshCw, Music, Mic2, Layers, Piano, Drum, Activity } from 'lucide-react';
+import { Download, RefreshCw, Music, Mic2, Layers, Piano, Drum, Activity, CheckCircle2, Circle } from 'lucide-react';
 
 import { useTranscriber } from './hooks/useTranscriber';
 import { useAudioPlayer } from './hooks/useAudioPlayer';
@@ -17,8 +17,11 @@ function App() {
   const [activeTab, setActiveTab] = useState<'midi' | '分離'>('midi');
 
   const { isProcessing, progress, result: transcriptionResult, startTranscription, resetTranscriber } = useTranscriber();
-  const { isPlaying, currentTime, duration, analyser, volume, setVolume, playAudio, togglePlayPause, seek, stopAudio, initAudioContext } = useAudioPlayer();
+  const { isPlaying, currentTime, duration, analyser, volume, setVolume, playAudio, playTracks, toggleTrackMute, togglePlayPause, seek, stopAudio, initAudioContext } = useAudioPlayer();
   const { isSeparating, separationResult, error: separationError, separateAudio, resetSeparation } = useSourceSeparation();
+
+  const [activeTracks, setActiveTracks] = useState<Record<string, boolean>>({});
+  const [isStemsLoading, setIsStemsLoading] = useState(false);
 
   // Watch for transcription results to generate MIDI
   useEffect(() => {
@@ -32,11 +35,64 @@ function App() {
     }
   }, [transcriptionResult]);
 
+  // Handle stem loading and playback when separation is ready and tab is active
+  useEffect(() => {
+    let active = true;
+    const loadStems = async () => {
+      if (separationResult && activeTab === '分離') {
+        setIsStemsLoading(true);
+        try {
+          const ctx = initAudioContext();
+          const tracks = await Promise.all(
+            Object.entries(separationResult).map(async ([name, url]) => {
+              const response = await fetch(url);
+              const arrayBuffer = await response.arrayBuffer();
+              const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+              return { name, buffer: audioBuffer };
+            })
+          );
+
+          if (!active) return;
+
+          playTracks(tracks);
+
+          const initialActiveTracks: Record<string, boolean> = {};
+          tracks.forEach(track => {
+            initialActiveTracks[track.name] = true;
+          });
+          setActiveTracks(initialActiveTracks);
+
+        } catch (error) {
+          console.error("Failed to load stems", error);
+        } finally {
+          if (active) {
+            setIsStemsLoading(false);
+          }
+        }
+      } else if (file && activeTab === 'midi') {
+        // Optionally replay original file when switching back
+      }
+    };
+
+    loadStems();
+    return () => { active = false; };
+  }, [separationResult, activeTab, initAudioContext, playTracks]);
+
+  const toggleTrack = (name: string) => {
+    setActiveTracks(prev => {
+      const isCurrentlyActive = prev[name];
+      const newActiveState = !isCurrentlyActive;
+      toggleTrackMute(name, !newActiveState);
+      return { ...prev, [name]: newActiveState };
+    });
+  };
+
   const handleFileSelected = async (selectedFile: File) => {
     setFile(selectedFile);
     setMidiUrl(null);
     resetTranscriber();
     resetSeparation();
+    setActiveTracks({});
     setActiveTab('midi');
 
     try {
@@ -67,6 +123,7 @@ function App() {
     stopAudio();
     resetTranscriber();
     resetSeparation();
+    setActiveTracks({});
   };
 
   const getStemIcon = (name: string) => {
@@ -132,7 +189,10 @@ function App() {
 
             <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '2rem', marginBottom: '2rem' }}>
               <button
-                onClick={() => setActiveTab('midi')}
+                onClick={() => {
+                  stopAudio(); // Stop audio when switching tabs
+                  setActiveTab('midi');
+                }}
                 className={`btn-tab ${activeTab === 'midi' ? 'active' : ''}`}
                 style={{
                   padding: '0.75rem 1.5rem',
@@ -150,7 +210,10 @@ function App() {
                 <Music size={18} /> MIDI 変換
               </button>
               <button
-                onClick={() => setActiveTab('分離')}
+                onClick={() => {
+                  stopAudio(); // Stop audio when switching tabs
+                  setActiveTab('分離');
+                }}
                 className={`btn-tab ${activeTab === '分離' ? 'active' : ''}`}
                 style={{
                   padding: '0.75rem 1.5rem',
@@ -173,7 +236,7 @@ function App() {
               {activeTab === 'midi' ? (
                 <div style={{ animation: 'fadeIn 0.3s ease' }}>
                   <div style={{ color: 'var(--color-text-dim)', marginBottom: '1rem' }}>
-                    {isProcessing ? `変換中... ${progress}%` : transcriptionResult ? 'MIDI変換完了' : '準備完了'}
+                    {isProcessing ? `変換中... ${progress}%` : transcriptionResult ? 'MIDI変換完了' : 'ファイル読み込み完了'}
                   </div>
 
                   {isProcessing && (
@@ -188,14 +251,6 @@ function App() {
                     <div style={{ marginTop: '1.5rem', animation: 'popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)' }}>
                       <a
                         href={midiUrl}
-                        onClick={() => {
-                          // MIDIはブラウザで再生されないため、通常はそのままでもダウンロードされるが、
-                          // 統一感を持たせるために必要なら同様の処理を行っても良い。
-                          // ここでは念のためそのままにするか、handleDownloadを使うか選択できますが、
-                          // Blob URL (createObjectURL) の場合は download 属性が効くのでそのままでOKです。
-                          // ただし、もしbackendからのURLなら handleDownload が安全です。
-                          // この midiUrl は generateMidi で生成された Blob URL なので、そのまま download 属性でOKです。
-                        }}
                         download={`${file.name.replace(/\.[^/.]+$/, "")}.mid`}
                         className="btn-primary"
                         style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none', fontSize: '1.2rem', padding: '0.8rem 2rem' }}
@@ -229,22 +284,87 @@ function App() {
                     </div>
                   )}
 
-                  {separationResult && (
+                  {isStemsLoading && (
+                    <div style={{ padding: '2rem' }}>
+                      <div className="spinner" style={{ margin: '0 auto 1rem' }}></div>
+                      <p>分離された音源を再生準備中...</p>
+                    </div>
+                  )}
+
+                  {separationResult && !isStemsLoading && (
                     <div style={{
                       display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
                       gap: '1rem',
                       marginTop: '1rem'
                     }}>
                       {Object.entries(separationResult).map(([name, url]) => (
-                        <div key={name} className="glass-panel" style={{ padding: '1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ color: 'var(--color-primary)' }}>{getStemIcon(name)}</span>
-                          <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{name}</span>
+                        <div key={name} className="glass-panel" style={{
+                          padding: '1rem',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          opacity: activeTracks[name] === false ? 0.4 : 1,
+                          transition: 'opacity 0.2s',
+                          boxShadow: activeTracks[name] !== false ? '0 4px 12px rgba(123, 74, 255, 0.2)' : 'none',
+                          border: activeTracks[name] !== false ? '1px solid rgba(123, 74, 255, 0.3)' : '1px solid rgba(255,255,255,0.05)'
+                        }}>
+
+                          <button
+                            onClick={() => toggleTrack(name)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'white',
+                              cursor: 'pointer',
+                              padding: '0.5rem',
+                              borderRadius: '50%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'transform 0.1s'
+                            }}
+                            onMouseDown={e => e.currentTarget.style.transform = 'scale(0.9)'}
+                            onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+                            onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+                            title={activeTracks[name] !== false ? 'Mute' : 'Unmute'}
+                          >
+                            {activeTracks[name] !== false ? (
+                              <CheckCircle2 color="var(--color-primary)" size={28} />
+                            ) : (
+                              <Circle color="rgba(255,255,255,0.3)" size={28} />
+                            )}
+                          </button>
+
+                          <span style={{
+                            color: activeTracks[name] !== false ? 'white' : 'var(--color-text-dim)',
+                            transition: 'color 0.2s'
+                          }}>{getStemIcon(name)}</span>
+
+                          <span style={{
+                            fontWeight: 600,
+                            textTransform: 'capitalize',
+                            color: activeTracks[name] !== false ? 'white' : 'var(--color-text-dim)',
+                            transition: 'color 0.2s'
+                          }}>{name}</span>
+
                           <a
                             href={url}
                             onClick={(e) => handleDownload(e, url, `${name}.wav`)}
                             className="btn-secondary"
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.8rem',
+                              textDecoration: 'none',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              cursor: 'pointer',
+                              marginTop: '0.5rem',
+                              pointerEvents: 'auto',
+                              opacity: 1 // Keep download button fully opaque
+                            }}
                           >
                             <Download size={14} /> Download
                           </a>
