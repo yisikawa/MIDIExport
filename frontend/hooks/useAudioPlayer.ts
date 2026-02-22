@@ -1,23 +1,34 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 interface UseAudioPlayerResult {
     isPlaying: boolean;
+    currentTime: number;
+    duration: number;
     analyser: AnalyserNode | null;
+    volume: number;
+    setVolume: (volume: number) => void;
     playAudio: (buffer: AudioBuffer) => void;
+    togglePlayPause: () => void;
+    seek: (time: number) => void;
     stopAudio: () => void;
     initAudioContext: () => AudioContext;
 }
 
 export const useAudioPlayer = (): UseAudioPlayerResult => {
     const [isPlaying, setIsPlaying] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [volume, setVolumeState] = useState(1);
     const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
-    // WE keep a reference to the AudioContext to prevent it from being garbage collected or recreated unnecessarily
-    // However, browsers usually require user interaction to create/resume AudioContext.
-    // We will create it on demand or manage a single instance if preferred.
-    // For this app, creating one per file load is the current pattern, but here we can be more flexible.
     const audioContextRef = useRef<AudioContext | null>(null);
     const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+    const bufferRef = useRef<AudioBuffer | null>(null);
+    const gainNodeRef = useRef<GainNode | null>(null);
+
+    const startTimeRef = useRef<number>(0);
+    const pauseTimeRef = useRef<number>(0);
+    const requestRef = useRef<number>(0);
 
     const initAudioContext = useCallback(() => {
         if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
@@ -33,78 +44,192 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
         return audioContextRef.current;
     }, []);
 
+    const setVolume = useCallback((newVolume: number) => {
+        setVolumeState(newVolume);
+        if (gainNodeRef.current) {
+            gainNodeRef.current.gain.value = newVolume;
+        }
+    }, []);
+
+    const updateProgress = useCallback(() => {
+        if (audioContextRef.current && isPlaying) {
+            const elapsed = audioContextRef.current.currentTime - startTimeRef.current;
+            setCurrentTime(pauseTimeRef.current + elapsed);
+            requestRef.current = requestAnimationFrame(updateProgress);
+        }
+    }, [isPlaying]);
+
+    useEffect(() => {
+        if (isPlaying) {
+            requestRef.current = requestAnimationFrame(updateProgress);
+        } else {
+            cancelAnimationFrame(requestRef.current);
+        }
+        return () => cancelAnimationFrame(requestRef.current);
+    }, [isPlaying, updateProgress]);
+
+    const stopAudio = useCallback(() => {
+        if (sourceRef.current) {
+            try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
+        }
+        setIsPlaying(false);
+        pauseTimeRef.current = 0;
+        setCurrentTime(0);
+        bufferRef.current = null;
+    }, []);
+
     const playAudio = useCallback((buffer: AudioBuffer) => {
         const ctx = initAudioContext();
 
         if (sourceRef.current) {
-            try {
-                sourceRef.current.stop();
-            } catch (e) { /* ignore */ }
+            try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
         }
+
+        bufferRef.current = buffer;
+        setDuration(buffer.duration);
+        pauseTimeRef.current = 0;
+        setCurrentTime(0);
 
         const source = ctx.createBufferSource();
         source.buffer = buffer;
 
-        // Connect to analyser if it exists (it should be init by initAudioContext)
-        // We need to re-fetch analyser from state or ref? 
-        // State updates are async, so let's rely on the fact that initAudioContext sets it.
-        // However, the state 'analyser' might not be updated in this render cycle yet if we just called init.
-        // Ideally, we return context and analyser from init.
+        let dest = analyser;
+        if (!dest) {
+            dest = ctx.createAnalyser();
+            dest.fftSize = 2048;
+            setAnalyser(dest);
+        }
 
-        // Re-getting analyser from the context destination chain is complex.
-        // Let's rely on the pattern that initAudioControl is called before or we ensure analyser is ready.
-        // For safety, let's create a temporary reference or assume the state will catch up for the visualizer, 
-        // but for connection we need the node instance immediately.
+        let gain = gainNodeRef.current;
+        if (!gain) {
+            gain = ctx.createGain();
+            gain.connect(ctx.destination);
+            gainNodeRef.current = gain;
+        }
+        gain.gain.value = volume;
 
-        // Simplification: Re-create analyser if missing or just use the one we have?
-        // Better to store analyser in ref as well for immediate access.
-
-        // Let's try a simpler approach compatible with existing App.tsx logic:
-        // User calls playAudio(buffer), we ensure context/analyser exist.
-
-        // FIX: Implementation detail - we need the AnalyserNode instance synchronously to connect.
-        // We can't rely on state 'analyser' here.
-
-        // Let's grab it from the context workflow or ref.
-        // Actually, let's restructure: initAudioContext returns the context AND the analyser.
-        // But we are in a hook.
-
-        // Revised approach: Use the context ref.
-
-
-        // We know initAudioContext creates it and sets state. 
-        // Let's create a dedicated Ref for analyzer to read it synchronously.
-
-        // For now, let's trust the logic where we might need to recreate it if context changes.
-        // Or simpler:
-        const dest = ctx.createAnalyser();
-        dest.fftSize = 2048;
-        setAnalyser(dest); // Update state for UI
-
-        // Connecting
         source.connect(dest);
-        dest.connect(ctx.destination);
+        dest.connect(gain);
 
+        startTimeRef.current = ctx.currentTime;
         source.start(0);
+
         sourceRef.current = source;
         setIsPlaying(true);
 
-        source.onended = () => setIsPlaying(false);
-    }, [initAudioContext]);
+        source.onended = () => {
+            setIsPlaying((currentIsPlaying) => {
+                if (!currentIsPlaying) return false;
+                if (ctx.currentTime - startTimeRef.current + pauseTimeRef.current >= buffer.duration - 0.1) {
+                    pauseTimeRef.current = 0;
+                    setCurrentTime(0);
+                }
+                return false;
+            });
+        };
+    }, [initAudioContext, analyser]);
 
-    const stopAudio = useCallback(() => {
-        if (sourceRef.current) {
-            try {
-                sourceRef.current.stop();
-            } catch (e) { /* ignore */ }
+    const togglePlayPause = useCallback(() => {
+        const ctx = audioContextRef.current;
+        const buffer = bufferRef.current;
+        const dest = analyser;
+        if (!ctx || !buffer || !dest) return;
+
+        if (isPlaying) {
+            if (sourceRef.current) {
+                try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
+            }
+            pauseTimeRef.current += ctx.currentTime - startTimeRef.current;
+            setIsPlaying(false);
+        } else {
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(dest);
+            const gain = gainNodeRef.current;
+            if (gain) {
+                dest.connect(gain);
+            } else {
+                dest.connect(ctx.destination);
+            }
+
+            startTimeRef.current = ctx.currentTime;
+
+            if (pauseTimeRef.current >= buffer.duration) {
+                pauseTimeRef.current = 0;
+            }
+
+            source.start(0, pauseTimeRef.current);
+            sourceRef.current = source;
+            setIsPlaying(true);
+
+            source.onended = () => {
+                setIsPlaying((currentIsPlaying) => {
+                    if (!currentIsPlaying) return false;
+                    if (ctx.currentTime - startTimeRef.current + pauseTimeRef.current >= buffer.duration - 0.1) {
+                        pauseTimeRef.current = 0;
+                        setCurrentTime(0);
+                    }
+                    return false;
+                });
+            };
         }
-        setIsPlaying(false);
-    }, []);
+    }, [isPlaying, analyser]);
+
+    const seek = useCallback((time: number) => {
+        const ctx = audioContextRef.current;
+        const buffer = bufferRef.current;
+        const dest = analyser;
+        if (!ctx || !buffer || !dest) return;
+
+        if (time < 0) time = 0;
+        if (time > buffer.duration) time = buffer.duration;
+
+        const wasPlaying = isPlaying;
+        if (sourceRef.current) {
+            try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
+        }
+
+        pauseTimeRef.current = time;
+        setCurrentTime(time);
+
+        if (wasPlaying) {
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(dest);
+            const gain = gainNodeRef.current;
+            if (gain) {
+                dest.connect(gain);
+            } else {
+                dest.connect(ctx.destination);
+            }
+
+            startTimeRef.current = ctx.currentTime;
+            source.start(0, time);
+            sourceRef.current = source;
+
+            source.onended = () => {
+                setIsPlaying((currentIsPlaying) => {
+                    if (!currentIsPlaying) return false;
+                    if (ctx.currentTime - startTimeRef.current + pauseTimeRef.current >= buffer.duration - 0.1) {
+                        pauseTimeRef.current = 0;
+                        setCurrentTime(0);
+                    }
+                    return false;
+                });
+            };
+        }
+    }, [isPlaying, analyser]);
 
     return {
         isPlaying,
+        currentTime,
+        duration,
         analyser,
+        volume,
+        setVolume,
         playAudio,
+        togglePlayPause,
+        seek,
         stopAudio,
         initAudioContext
     };

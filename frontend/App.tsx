@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Layout } from './components/Layout';
 import { DropZone } from './components/DropZone';
 import { Visualizer } from './components/Visualizer';
+import { AudioPlayerBar } from './components/AudioPlayerBar';
 import { Download, RefreshCw, Music, Mic2, Layers, Piano, Drum, Activity } from 'lucide-react';
 
 import { useTranscriber } from './hooks/useTranscriber';
@@ -16,7 +17,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'midi' | '分離'>('midi');
 
   const { isProcessing, progress, result: transcriptionResult, startTranscription, resetTranscriber } = useTranscriber();
-  const { isPlaying, analyser, playAudio, stopAudio, initAudioContext } = useAudioPlayer();
+  const { isPlaying, currentTime, duration, analyser, volume, setVolume, playAudio, togglePlayPause, seek, stopAudio, initAudioContext } = useAudioPlayer();
   const { isSeparating, separationResult, error: separationError, separateAudio, resetSeparation } = useSourceSeparation();
 
   // Watch for transcription results to generate MIDI
@@ -116,6 +117,18 @@ function App() {
             <h2 style={{ marginBottom: '1.5rem', fontWeight: 600 }}>{file.name}</h2>
 
             <Visualizer analyser={analyser} isPlaying={isPlaying} />
+
+            <div style={{ maxWidth: '600px', margin: '0 auto' }}>
+              <AudioPlayerBar
+                isPlaying={isPlaying}
+                currentTime={currentTime}
+                duration={duration}
+                volume={volume}
+                onTogglePlayPause={togglePlayPause}
+                onSeek={seek}
+                onVolumeChange={setVolume}
+              />
+            </div>
 
             <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '2rem', marginBottom: '2rem' }}>
               <button
