@@ -1,5 +1,5 @@
 import { Midi } from '@tonejs/midi';
-import type { NoteEventTime } from '../types';
+import type { NoteEventTime } from '@spotify/basic-pitch';
 
 export const generateMidi = (noteEvents: NoteEventTime[]): string | null => {
     if (!noteEvents || noteEvents.length === 0) {
@@ -19,6 +19,6 @@ export const generateMidi = (noteEvents: NoteEventTime[]): string | null => {
     });
 
     const midiArray = midi.toArray();
-    const blob = new Blob([midiArray], { type: 'audio/midi' });
+    const blob = new Blob([midiArray as any], { type: 'audio/midi' });
     return URL.createObjectURL(blob);
 };

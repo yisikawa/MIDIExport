@@ -175,7 +175,7 @@ function App() {
                     <div style={{ marginTop: '1.5rem', animation: 'popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)' }}>
                       <a
                         href={midiUrl}
-                        onClick={(e) => {
+                        onClick={() => {
                           // MIDIはブラウザで再生されないため、通常はそのままでもダウンロードされるが、
                           // 統一感を持たせるために必要なら同様の処理を行っても良い。
                           // ここでは念のためそのままにするか、handleDownloadを使うか選択できますが、

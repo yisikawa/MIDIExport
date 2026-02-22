@@ -5,7 +5,7 @@ if (typeof window === 'undefined') {
 }
 
 import { BasicPitch, addPitchBendsToNoteEvents, outputToNotesPoly, noteFramesToTime } from '@spotify/basic-pitch';
-import type { WorkerMessage, WorkerResponse } from '../types';
+import type { WorkerMessage } from '../types';
 
 // State
 

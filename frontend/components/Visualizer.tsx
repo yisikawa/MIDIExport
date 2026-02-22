@@ -7,7 +7,7 @@ interface VisualizerProps {
 
 export const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const animationFrameRef = useRef<number>();
+    const animationFrameRef = useRef<number>(0);
 
     useEffect(() => {
         if (!analyser || !isPlaying || !canvasRef.current) return;

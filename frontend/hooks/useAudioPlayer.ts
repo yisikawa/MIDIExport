@@ -71,7 +71,7 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
 
         // Revised approach: Use the context ref.
 
-        let currentAnalyser: AnalyserNode;
+
         // We know initAudioContext creates it and sets state. 
         // Let's create a dedicated Ref for analyzer to read it synchronously.
 

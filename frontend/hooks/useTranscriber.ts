@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { WorkerResponse, NoteEventTime } from '../types';
+import type { WorkerResponse } from '../types';
+import type { NoteEventTime } from '@spotify/basic-pitch';
 
 interface UseTranscriberResult {
     isProcessing: boolean;

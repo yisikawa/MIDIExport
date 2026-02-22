@@ -20,7 +20,7 @@ export const useSourceSeparation = () => {
             formData.append('model', model);
 
             // Assuming backend is running on localhost:8000
-            const response = await fetch('http://localhost:8000/separate', {
+            const response = await fetch('http://localhost:8001/separate', {
                 method: 'POST',
                 body: formData,
             });
@@ -37,12 +37,12 @@ export const useSourceSeparation = () => {
                 const absoluteStems: SeparationResult = {};
                 for (const [key, val] of Object.entries(stems)) {
                     if (typeof val === 'string') {
-                        absoluteStems[key] = `http://localhost:8000${val}`;
+                        absoluteStems[key] = `http://localhost:8001${val}`;
                     }
                 }
                 setSeparationResult(absoluteStems);
             } else {
-                 throw new Error('Server returned success: false');
+                throw new Error('Server returned success: false');
             }
 
         } catch (err: any) {
