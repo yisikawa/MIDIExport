@@ -1,73 +1,98 @@
-# React + TypeScript + Vite
+# MIDIExport
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+音声ファイル（MP3・WAV）をMIDIに変換するWebアプリケーション。
+Spotify Basic Pitch による高精度なピッチ検出と、Demucs によるステム分離を組み合わせ、ブラウザ上で完結した変換体験を提供します。
 
-Currently, two official plugins are available:
+## 主な機能
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **音声 → MIDI 変換**: `@spotify/basic-pitch` を使用したブラウザ内ピッチ検出
+- **ステム分離**: バックエンド（Demucs / htdemucs_6s）によるボーカル・楽器の分離
+- **マルチトラック再生**: 分離済みステムのミュート・ソロ制御
+- **オーディオプレイヤー**: プログレスバー・音量コントロール付き
+- **プレミアムUI**: ダークモード・Glassmorphism・マイクロインタラクション
 
-## React Compiler
+## 技術スタック
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| 層 | 技術 |
+|---|---|
+| フロントエンド | React 19 + TypeScript + Vite |
+| ピッチ検出 | @spotify/basic-pitch（Web Worker） |
+| MIDI生成 | @tonejs/midi / midi-writer-js |
+| バックエンド | Python（FastAPI / Flask 系）|
+| ステム分離 | Demucs（htdemucs_6s モデル） |
 
-## Expanding the ESLint configuration
+## セットアップ
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### 必要環境
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- Node.js 18 以上
+- Python 3.9 以上
+- （初回のみ）Demucs モデルのダウンロード
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### インストール
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+# フロントエンド依存関係
+npm install
+
+# バックエンド依存関係（初回のみ）
+cd backend
+python -m venv venv
+venv\Scripts\activate       # Windows
+pip install -r requirements.txt
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 起動
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+# フロントエンド・バックエンドを同時起動
+npm start
 ```
+
+または `start.bat` をダブルクリックしても起動できます。
+
+個別に起動する場合:
+
+```bash
+# フロントエンドのみ
+npm run dev
+
+# バックエンドのみ
+cd backend && venv\Scripts\activate && python main.py
+```
+
+## プロジェクト構成
+
+```
+MIDIExport/
+├── frontend/
+│   ├── components/
+│   │   ├── AudioPlayerBar.tsx   # 再生コントロール
+│   │   ├── DropZone.tsx         # ファイルアップロード
+│   │   ├── Layout.tsx           # ページレイアウト
+│   │   └── Visualizer.tsx       # 波形ビジュアライザー
+│   ├── hooks/
+│   │   ├── useAudioPlayer.ts    # 再生状態管理
+│   │   ├── useSourceSeparation.ts # ステム分離
+│   │   └── useTranscriber.ts    # MIDI変換
+│   ├── workers/
+│   │   └── basicPitchWorker.ts  # Web Worker（ピッチ検出）
+│   ├── utils/
+│   │   ├── audio.ts
+│   │   └── midi.ts
+│   ├── App.tsx
+│   └── main.tsx
+├── backend/
+│   ├── main.py                  # APIサーバー
+│   ├── uploads/                 # アップロードされた音声
+│   └── separated/               # 分離済みステム
+├── start.bat
+└── package.json
+```
+
+## 使い方
+
+1. アプリをブラウザで開く（デフォルト: `http://localhost:5173`）
+2. 音声ファイル（MP3・WAV）をドロップゾーンにドラッグ＆ドロップ
+3. ステム分離が完了したらトラックを選択・ミュート調整
+4. 「変換」ボタンで MIDI ファイルを生成・ダウンロード
