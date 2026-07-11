@@ -6,7 +6,7 @@ import uuid
 import pathlib
 import sys
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -18,6 +18,10 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 OUTPUT_TTL_SECONDS = 24 * 60 * 60  # 24時間
+
+ALLOWED_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".flac"}
+ALLOWED_MODELS = {"htdemucs", "htdemucs_6s"}
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB
 
 
 def cleanup_old_outputs(ttl_seconds: int = OUTPUT_TTL_SECONDS) -> int:
@@ -54,85 +58,78 @@ app.add_middleware(
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
 @app.post("/separate")
-async def separate_audio(file: UploadFile = File(...), model: str = "htdemucs_6s"):
+async def separate_audio(file: UploadFile = File(...), model: str = Form("htdemucs_6s")):
     """
     Separates the uploaded audio file into multiple stems using Demucs.
-    Default model is 'htdemucs_6s' for 6stems (vocals, drums, bass, guitar, piano, other).
+    Default model is 'htdemucs_6s' for 6 stems (vocals, drums, bass, guitar, piano, other).
     """
+    if model not in ALLOWED_MODELS:
+        raise HTTPException(status_code=400, detail=f"Unsupported model. Allowed: {sorted(ALLOWED_MODELS)}")
+
+    suffix = pathlib.Path(file.filename or "").suffix.lower()
+    if suffix not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {sorted(ALLOWED_EXTENSIONS)}")
+
+    # クライアント由来のファイル名はパスに使わない(パストラバーサル対策)
     session_id = str(uuid.uuid4())
-    session_upload_path = UPLOAD_DIR / f"{session_id}_{file.filename}"
-    
-    # Save uploaded file
-    with open(session_upload_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-    
+    session_upload_path = UPLOAD_DIR / f"{session_id}{suffix}"
+
     try:
-        # Prepare output directory for this session
+        size = 0
+        with open(session_upload_path, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="File too large (max 200MB)")
+                f.write(chunk)
+
         session_output_dir = OUTPUT_DIR / session_id
         session_output_dir.mkdir(exist_ok=True)
-        
-        # Run Demucs
-        # Run Demucs using our patched script (run_demucs.py)
-        # Use sys.executable to ensure it uses the current venv's python
-        # Assuming run_demucs.py is in the same directory as main.py
+
         script_path = BASE_DIR / "run_demucs.py"
         cmd = [
             sys.executable, str(script_path),
             "-n", model,
             "-o", str(session_output_dir),
-            str(session_upload_path)
+            str(session_upload_path),
         ]
-        
-        # Set FFmpeg path so ffmpeg-python can find the executable
+
         env = os.environ.copy()
-        # ffmpeg_bin = r"C:\ffmpeg-8.0.1\bin"
-        # env["PATH"] = f"{ffmpeg_bin};{env.get('PATH', '')}"
-        # env["FFMPEG_BINARY_DIR"] = ffmpeg_bin 
-        
         print(f"Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-        
 
-        
-        
         if result.returncode != 0:
             print(f"Demucs Error: {result.stderr}")
             raise HTTPException(status_code=500, detail=f"Separation failed: {result.stderr}")
-        
-        # Locate separated files
-        # Demucs output structure: session_output_dir/{model}/{filename_no_ext}/{stem}.wav
-        file_stem = session_upload_path.stem
-        model_results_path = session_output_dir / model / file_stem
-        
+
+        # Demucs の出力構造: session_output_dir/{model}/{入力ファイル名(拡張子なし)}/{stem}.wav
+        model_results_path = session_output_dir / model / session_upload_path.stem
         if not model_results_path.exists():
-            # Sometimes demucs replaces spaces or special chars in the filename
-            # Let's look for any directory inside session_output_dir / model
             model_dir = session_output_dir / model
-            subdirs = [d for d in model_dir.iterdir() if d.is_dir()]
+            subdirs = [d for d in model_dir.iterdir() if d.is_dir()] if model_dir.exists() else []
             if subdirs:
                 model_results_path = subdirs[0]
             else:
                 raise HTTPException(status_code=500, detail="Could not find separated files.")
-        
+
         stems = {}
         for stem_file in model_results_path.glob("*.wav"):
-            # Construct accessible URL
             relative_url = f"/output/{session_id}/{model}/{model_results_path.name}/{stem_file.name}"
             stems[stem_file.stem] = relative_url
-            
+
         return {
             "success": True,
             "session_id": session_id,
-            "stems": stems
+            "stems": stems,
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Exception: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
     finally:
-        # Optional: Clean up input file
-        if session_upload_path.exists():
-            os.remove(session_upload_path)
+        session_upload_path.unlink(missing_ok=True)
 
 @app.get("/")
 async def root():
