@@ -17,7 +17,6 @@
     "@spotify/basic-pitch": "^1.0.1",
     "@tonejs/midi": "^2.0.28",
     "lucide-react": "^0.563.0",
-    "midi-writer-js": "^3.1.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "vite-plugin-node-polyfills": "^0.25.0"
