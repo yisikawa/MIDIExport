@@ -35,6 +35,16 @@ export const useStemTranscriber = () => {
                     { type: 'module' }
                 );
 
+                worker.onerror = (event) => {
+                    worker.terminate();
+                    reject(new Error(event.message || 'Workerの読み込みに失敗しました'));
+                };
+
+                worker.onmessageerror = () => {
+                    worker.terminate();
+                    reject(new Error('Workerとの通信に失敗しました'));
+                };
+
                 worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
                     const { type, payload } = e.data;
 
