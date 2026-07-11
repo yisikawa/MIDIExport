@@ -38,19 +38,23 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
     const startTimeRef = useRef<number>(0);
     const pauseTimeRef = useRef<number>(0);
     const requestRef = useRef<number>(0);
+    const analyserRef = useRef<AnalyserNode | null>(null);
 
     const initAudioContext = useCallback(() => {
-        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-            const ctx = new AudioContext();
+        let ctx = audioContextRef.current;
+        if (!ctx || ctx.state === 'closed') {
+            ctx = new AudioContext();
             audioContextRef.current = ctx;
 
             const ana = ctx.createAnalyser();
             ana.fftSize = 2048;
+            analyserRef.current = ana;
             setAnalyser(ana);
-
-            return ctx;
         }
-        return audioContextRef.current;
+        if (ctx.state === 'suspended') {
+            void ctx.resume();
+        }
+        return ctx;
     }, []);
 
     const stopAllSources = useCallback(() => {
@@ -83,10 +87,10 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
     const updateProgress = useCallback(() => {
         if (audioContextRef.current && isPlaying) {
             const elapsed = audioContextRef.current.currentTime - startTimeRef.current;
-            setCurrentTime(pauseTimeRef.current + elapsed);
+            setCurrentTime(Math.min(pauseTimeRef.current + elapsed, duration));
             requestRef.current = requestAnimationFrame(updateProgress);
         }
-    }, [isPlaying]);
+    }, [isPlaying, duration]);
 
     useEffect(() => {
         if (isPlaying) {
@@ -110,10 +114,15 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
     const startPlayback = useCallback((ctx: AudioContext, timeOffset: number) => {
         stopAllSources();
 
-        let dest = analyser;
+        if (ctx.state === 'suspended') {
+            void ctx.resume();
+        }
+
+        let dest = analyserRef.current;
         if (!dest) {
             dest = ctx.createAnalyser();
             dest.fftSize = 2048;
+            analyserRef.current = dest;
             setAnalyser(dest);
         }
 
@@ -172,7 +181,7 @@ export const useAudioPlayer = (): UseAudioPlayerResult => {
                 });
             };
         }
-    }, [analyser, volume, stopAllSources]);
+    }, [volume, stopAllSources]);
 
     const playTracks = useCallback((tracks: AudioTrack[]) => {
         const ctx = initAudioContext();
