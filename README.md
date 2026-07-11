@@ -17,8 +17,8 @@ Spotify Basic Pitch による高精度なピッチ検出と、Demucs による�
 |---|---|
 | フロントエンド | React 19 + TypeScript + Vite |
 | ピッチ検出 | @spotify/basic-pitch（Web Worker） |
-| MIDI生成 | @tonejs/midi / midi-writer-js |
-| バックエンド | Python（FastAPI / Flask 系）|
+| MIDI生成 | @tonejs/midi |
+| バックエンド | Python（FastAPI + uvicorn）|
 | ステム分離 | Demucs（htdemucs_6s モデル） |
 
 ## セットアップ
@@ -61,6 +61,16 @@ npm run dev
 cd backend && venv\Scripts\activate && python main.py
 ```
 
+## テスト
+
+```bash
+# フロントエンド（Vitest）
+npm test
+
+# バックエンド（pytest）
+cd backend && venv\Scripts\python.exe -m pytest tests -v
+```
+
 ## プロジェクト構成
 
 ```
@@ -72,20 +82,22 @@ MIDIExport/
 │   │   ├── Layout.tsx           # ページレイアウト
 │   │   └── Visualizer.tsx       # 波形ビジュアライザー
 │   ├── hooks/
-│   │   ├── useAudioPlayer.ts    # 再生状態管理
-│   │   ├── useSourceSeparation.ts # ステム分離
-│   │   └── useTranscriber.ts    # MIDI変換
+│   │   ├── useAudioPlayer.ts      # 再生状態管理
+│   │   ├── useSourceSeparation.ts # ステム分離API呼び出し
+│   │   └── useStemTranscriber.ts  # ステムごとのMIDI変換
 │   ├── workers/
 │   │   └── basicPitchWorker.ts  # Web Worker（ピッチ検出）
 │   ├── utils/
-│   │   ├── audio.ts
-│   │   └── midi.ts
+│   │   ├── audio.ts             # リサンプリング
+│   │   └── midi.ts              # MIDIファイル生成
 │   ├── App.tsx
 │   └── main.tsx
 ├── backend/
-│   ├── main.py                  # APIサーバー
-│   ├── uploads/                 # アップロードされた音声
-│   └── separated/               # 分離済みステム
+│   ├── main.py                  # APIサーバー（FastAPI）
+│   ├── run_demucs.py            # Demucs実行ラッパー（torchaudio保存パッチ）
+│   ├── tests/                   # pytestテスト
+│   ├── uploads/                 # アップロードされた音声（処理後に削除）
+│   └── separated/               # 分離済みステム（24時間で自動削除）
 ├── start.bat
 └── package.json
 ```
