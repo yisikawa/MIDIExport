@@ -25,12 +25,14 @@ def _isolate_dirs(monkeypatch, tmp_path):
 
 def test_rejects_unknown_model(monkeypatch, tmp_path):
     _isolate_dirs(monkeypatch, tmp_path)
+    monkeypatch.setattr(main.subprocess, "run", make_fake_demucs())
     r = client.post("/separate", data={"model": "evil_model"}, files=_wav_upload())
     assert r.status_code == 400
 
 
 def test_rejects_unsupported_extension(monkeypatch, tmp_path):
     _isolate_dirs(monkeypatch, tmp_path)
+    monkeypatch.setattr(main.subprocess, "run", make_fake_demucs())
     r = client.post("/separate", files=_wav_upload(filename="script.exe"))
     assert r.status_code == 400
 
@@ -87,3 +89,16 @@ def test_separate_success_returns_stem_urls(monkeypatch, tmp_path):
     assert set(body["stems"].keys()) == {"vocals", "drums"}
     for url in body["stems"].values():
         assert url.startswith(f"/output/{body['session_id']}/htdemucs_6s/")
+
+
+def test_separate_success_with_non_default_model(monkeypatch, tmp_path):
+    _isolate_dirs(monkeypatch, tmp_path)
+    monkeypatch.setattr(main.subprocess, "run", make_fake_demucs())
+    r = client.post("/separate", data={"model": "htdemucs"}, files=_wav_upload())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    assert set(body["stems"].keys()) == {"vocals", "drums"}
+    for url in body["stems"].values():
+        assert url.startswith(f"/output/{body['session_id']}/htdemucs/")
+        assert "/htdemucs_6s/" not in url

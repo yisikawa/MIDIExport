@@ -31,9 +31,15 @@ def cleanup_old_outputs(ttl_seconds: int = OUTPUT_TTL_SECONDS) -> int:
     removed = 0
     now = time.time()
     for session_dir in OUTPUT_DIR.iterdir():
-        if session_dir.is_dir() and now - session_dir.stat().st_mtime > ttl_seconds:
-            shutil.rmtree(session_dir, ignore_errors=True)
-            removed += 1
+        try:
+            if not session_dir.is_dir() or now - session_dir.stat().st_mtime <= ttl_seconds:
+                continue
+        except FileNotFoundError:
+            # iterdir() の列挙後、stat() までの間に他のリクエスト等で
+            # ディレクトリが削除された場合はスキップする
+            continue
+        shutil.rmtree(session_dir, ignore_errors=True)
+        removed += 1
     return removed
 
 
