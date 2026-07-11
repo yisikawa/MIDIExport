@@ -61,6 +61,8 @@ npm run dev
 cd backend && venv\Scripts\activate && python main.py
 ```
 
+`/api` へのリクエストは Vite dev server（`npm run dev` / `npm start`）のプロキシ設定（`vite.config.ts`）経由でのみバックエンドに中継されます。本番ビルド（`dist/`）を静的ホスティングする場合はこのプロキシは機能しないため、別途リバースプロキシ等の設定が必要です。
+
 ## テスト
 
 ```bash
@@ -69,6 +71,13 @@ npm test
 
 # バックエンド（pytest）
 cd backend && venv\Scripts\python.exe -m pytest tests -v
+```
+
+バックエンドのテストを実行するには、`requirements.txt` に加えて `requirements-dev.txt`（pytest・httpx）のインストールも必要です。
+
+```bash
+cd backend
+pip install -r requirements.txt -r requirements-dev.txt
 ```
 
 ## プロジェクト構成
