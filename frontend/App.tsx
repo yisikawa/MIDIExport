@@ -260,6 +260,12 @@ function App() {
                             <Music size={14} /> MIDI変換
                           </button>
                         )}
+
+                        {stemState?.error && (
+                          <div style={{ fontSize: '0.7rem', color: '#ff8080', textAlign: 'center' }}>
+                            {stemState.error}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
