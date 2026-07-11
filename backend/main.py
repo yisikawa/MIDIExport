@@ -1,14 +1,45 @@
 import os
 import shutil
 import subprocess
+import time
 import uuid
 import pathlib
 import sys
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-app = FastAPI()
+BASE_DIR = pathlib.Path(__file__).parent.resolve()
+UPLOAD_DIR = BASE_DIR / "uploads"
+OUTPUT_DIR = BASE_DIR / "separated"
+
+UPLOAD_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+OUTPUT_TTL_SECONDS = 24 * 60 * 60  # 24時間
+
+
+def cleanup_old_outputs(ttl_seconds: int = OUTPUT_TTL_SECONDS) -> int:
+    """OUTPUT_DIR 直下の、TTL を超えて古いセッションディレクトリを削除する。"""
+    removed = 0
+    now = time.time()
+    for session_dir in OUTPUT_DIR.iterdir():
+        if session_dir.is_dir() and now - session_dir.stat().st_mtime > ttl_seconds:
+            shutil.rmtree(session_dir, ignore_errors=True)
+            removed += 1
+    return removed
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    removed = cleanup_old_outputs()
+    if removed:
+        print(f"Cleaned up {removed} old session dir(s)")
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Allow CORS for the frontend
 app.add_middleware(
@@ -18,13 +49,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-BASE_DIR = pathlib.Path(__file__).parent.resolve()
-UPLOAD_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR = BASE_DIR / "separated"
-
-UPLOAD_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
 
 # URL path to access separated files
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
