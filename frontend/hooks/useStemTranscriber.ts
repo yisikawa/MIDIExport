@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { WorkerResponse } from '../types';
+import type { NoteEventTime } from '@spotify/basic-pitch';
 import { resampleAudio } from '../utils/audio';
 import { generateMidi } from '../utils/midi';
 
@@ -7,16 +8,23 @@ interface StemMidiState {
     isProcessing: boolean;
     progress: number;
     midiUrl: string | null;
+    error: string | null;
 }
 
 export const useStemTranscriber = () => {
     const [stemStates, setStemStates] = useState<Record<string, StemMidiState>>({});
 
     const convertStem = useCallback(async (stemName: string, wavUrl: string) => {
-        setStemStates(prev => ({
-            ...prev,
-            [stemName]: { isProcessing: true, progress: 0, midiUrl: null }
-        }));
+        setStemStates(prev => {
+            const old = prev[stemName];
+            if (old?.midiUrl) {
+                URL.revokeObjectURL(old.midiUrl);
+            }
+            return {
+                ...prev,
+                [stemName]: { isProcessing: true, progress: 0, midiUrl: null, error: null }
+            };
+        });
 
         try {
             const response = await fetch(wavUrl);
@@ -35,6 +43,16 @@ export const useStemTranscriber = () => {
                     { type: 'module' }
                 );
 
+                worker.onerror = (event) => {
+                    worker.terminate();
+                    reject(new Error(event.message || 'Workerの読み込みに失敗しました'));
+                };
+
+                worker.onmessageerror = () => {
+                    worker.terminate();
+                    reject(new Error('Workerとの通信に失敗しました'));
+                };
+
                 worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
                     const { type, payload } = e.data;
 
@@ -46,10 +64,15 @@ export const useStemTranscriber = () => {
                             [stemName]: { ...prev[stemName], progress: Math.round((payload as number) * 100) }
                         }));
                     } else if (type === 'RESULT') {
-                        const midiUrl = generateMidi(payload);
+                        const midiUrl = generateMidi(payload as NoteEventTime[]);
                         setStemStates(prev => ({
                             ...prev,
-                            [stemName]: { isProcessing: false, progress: 100, midiUrl }
+                            [stemName]: {
+                                isProcessing: false,
+                                progress: 100,
+                                midiUrl,
+                                error: midiUrl ? null : 'ノートが検出されませんでした',
+                            }
                         }));
                         worker.terminate();
                         resolve();
@@ -67,14 +90,20 @@ export const useStemTranscriber = () => {
             console.error(err);
             setStemStates(prev => ({
                 ...prev,
-                [stemName]: { isProcessing: false, progress: 0, midiUrl: null }
+                [stemName]: { isProcessing: false, progress: 0, midiUrl: null, error: message }
             }));
-            alert(`${stemName} のMIDI変換に失敗しました: ${message}`);
         }
     }, []);
 
     const resetStemStates = useCallback(() => {
-        setStemStates({});
+        setStemStates(prev => {
+            Object.values(prev).forEach(s => {
+                if (s.midiUrl) {
+                    URL.revokeObjectURL(s.midiUrl);
+                }
+            });
+            return {};
+        });
     }, []);
 
     return { stemStates, convertStem, resetStemStates };

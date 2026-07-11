@@ -19,8 +19,8 @@ export const useSourceSeparation = () => {
             formData.append('file', file);
             formData.append('model', model);
 
-            // Assuming backend is running on localhost:8000
-            const response = await fetch('http://localhost:8001/separate', {
+            // Vite の dev proxy(/api → localhost:8001)経由でバックエンドに到達する
+            const response = await fetch('/api/separate', {
                 method: 'POST',
                 body: formData,
             });
@@ -32,12 +32,12 @@ export const useSourceSeparation = () => {
 
             const data = await response.json();
             if (data.success) {
-                // Adjust URLs to include backend host
+                // バックエンドが返す相対URL(/output/...)を proxy 経由のパスに変換
                 const stems = data.stems;
                 const absoluteStems: SeparationResult = {};
                 for (const [key, val] of Object.entries(stems)) {
                     if (typeof val === 'string') {
-                        absoluteStems[key] = `http://localhost:8001${val}`;
+                        absoluteStems[key] = `/api${val}`;
                     }
                 }
                 setSeparationResult(absoluteStems);

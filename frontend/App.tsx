@@ -11,6 +11,7 @@ import { useStemTranscriber } from './hooks/useStemTranscriber';
 
 function App() {
   const [file, setFile] = useState<File | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const { isPlaying, currentTime, duration, analyser, volume, setVolume, playAudio, playTracks, toggleTrackMute, togglePlayPause, seek, stopAudio, initAudioContext } = useAudioPlayer();
   const { isSeparating, separationResult, error: separationError, separateAudio, resetSeparation } = useSourceSeparation();
@@ -70,6 +71,7 @@ function App() {
   };
 
   const handleFileSelected = async (selectedFile: File) => {
+    setLoadError(null);
     setFile(selectedFile);
     resetSeparation();
     resetStemStates();
@@ -83,7 +85,8 @@ function App() {
 
     } catch (err) {
       console.error(err);
-      alert('Failed to load audio file. Please try a different MP3 or WAV.');
+      setFile(null);
+      setLoadError('音声ファイルの読み込みに失敗しました。別のMP3またはWAVをお試しください。');
     }
   };
 
@@ -95,6 +98,7 @@ function App() {
 
   const reset = () => {
     setFile(null);
+    setLoadError(null);
     stopAudio();
     resetSeparation();
     resetStemStates();
@@ -142,6 +146,11 @@ function App() {
             <h2 style={{ textAlign: 'center', marginBottom: '2rem', fontSize: '2rem', fontWeight: 300 }}>
               AI <span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Audio Studio</span>
             </h2>
+            {loadError && (
+              <div style={{ color: '#ff4d4d', padding: '1rem', background: 'rgba(255,0,0,0.1)', borderRadius: '0.5rem', marginBottom: '1rem', textAlign: 'center' }}>
+                {loadError}
+              </div>
+            )}
             <DropZone onFileSelected={handleFileSelected} />
           </div>
         ) : (
@@ -259,6 +268,12 @@ function App() {
                           >
                             <Music size={14} /> MIDI変換
                           </button>
+                        )}
+
+                        {stemState?.error && (
+                          <div style={{ fontSize: '0.7rem', color: '#ff8080', textAlign: 'center' }}>
+                            {stemState.error}
+                          </div>
                         )}
                       </div>
                     );

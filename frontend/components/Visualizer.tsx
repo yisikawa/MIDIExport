@@ -24,6 +24,15 @@ export const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying }) =
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+            const style = getComputedStyle(document.documentElement);
+            const primary = style.getPropertyValue('--color-primary').trim() || '#a78bfa';
+            const accent = style.getPropertyValue('--color-accent').trim() || '#22d3ee';
+
+            const gradient = ctx.createLinearGradient(0, canvas.height, 0, 0);
+            gradient.addColorStop(0, primary);
+            gradient.addColorStop(1, accent);
+            ctx.fillStyle = gradient;
+
             const barWidth = (canvas.width / bufferLength) * 2.5;
             let barHeight;
             let x = 0;
@@ -31,18 +40,6 @@ export const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying }) =
             for (let i = 0; i < bufferLength; i++) {
                 barHeight = dataArray[i];
 
-                const style = getComputedStyle(document.documentElement);
-                const primary = style.getPropertyValue('--color-primary').trim() || '#a78bfa';
-                const accent = style.getPropertyValue('--color-accent').trim() || '#22d3ee';
-
-                // Gradient fill
-                const gradient = ctx.createLinearGradient(0, canvas.height, 0, 0);
-                gradient.addColorStop(0, primary);
-                gradient.addColorStop(1, accent);
-
-                ctx.fillStyle = gradient;
-
-                // Rounded bars (simulated by ignoring bottom radius)
                 ctx.beginPath();
                 ctx.roundRect(x, canvas.height - barHeight / 1.5, barWidth, barHeight / 1.5, [4, 4, 0, 0]);
                 ctx.fill();
