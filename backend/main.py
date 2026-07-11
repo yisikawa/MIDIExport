@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ OUTPUT_TTL_SECONDS = 24 * 60 * 60  # 24時間
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".flac"}
 ALLOWED_MODELS = {"htdemucs", "htdemucs_6s"}
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB
+SEPARATION_TIMEOUT_SECONDS = 900  # 15分
 
 
 def cleanup_old_outputs(ttl_seconds: int = OUTPUT_TTL_SECONDS) -> int:
@@ -96,11 +98,23 @@ async def separate_audio(file: UploadFile = File(...), model: str = Form("htdemu
 
         env = os.environ.copy()
         print(f"Running command: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        try:
+            # subprocess.run はブロッキングなのでワーカースレッドで実行し、
+            # イベントループを塞がない(分離中も他リクエストに応答できる)
+            result = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=SEPARATION_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="Separation timed out")
 
         if result.returncode != 0:
             print(f"Demucs Error: {result.stderr}")
-            raise HTTPException(status_code=500, detail=f"Separation failed: {result.stderr}")
+            raise HTTPException(status_code=500, detail="Separation failed. See server logs for details.")
 
         # Demucs の出力構造: session_output_dir/{model}/{入力ファイル名(拡張子なし)}/{stem}.wav
         model_results_path = session_output_dir / model / session_upload_path.stem
