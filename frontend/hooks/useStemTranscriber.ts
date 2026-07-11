@@ -15,10 +15,16 @@ export const useStemTranscriber = () => {
     const [stemStates, setStemStates] = useState<Record<string, StemMidiState>>({});
 
     const convertStem = useCallback(async (stemName: string, wavUrl: string) => {
-        setStemStates(prev => ({
-            ...prev,
-            [stemName]: { isProcessing: true, progress: 0, midiUrl: null, error: null }
-        }));
+        setStemStates(prev => {
+            const old = prev[stemName];
+            if (old?.midiUrl) {
+                URL.revokeObjectURL(old.midiUrl);
+            }
+            return {
+                ...prev,
+                [stemName]: { isProcessing: true, progress: 0, midiUrl: null, error: null }
+            };
+        });
 
         try {
             const response = await fetch(wavUrl);
@@ -90,7 +96,14 @@ export const useStemTranscriber = () => {
     }, []);
 
     const resetStemStates = useCallback(() => {
-        setStemStates({});
+        setStemStates(prev => {
+            Object.values(prev).forEach(s => {
+                if (s.midiUrl) {
+                    URL.revokeObjectURL(s.midiUrl);
+                }
+            });
+            return {};
+        });
     }, []);
 
     return { stemStates, convertStem, resetStemStates };
